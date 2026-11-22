@@ -16,6 +16,11 @@ le app vengono *sospese* dal sistema (non si aprono), non si possono disinstalla
 - **Uscita d'emergenza**: richiesta con password → attesa **24 h** → conferma con password → toglie tutto e permette la disinstallazione.
 - **Servizio sempre attivo** (notifica silenziosa) per limiti e installazioni; worker ogni 6 h come riserva.
 
+## Modalità base (senza Device Owner)
+- Pulsante "Usa modalità base" nella schermata iniziale: blocco tramite **Accessibilità** (app bloccata → home + schermata rossa). Limiti e "Mai installare" (= non si aprono) funzionano uguale.
+- Aggirabile (disattivando l'accessibilità o disinstallando). Protezioni e silenziamento update solo da Device Owner. Da "Altro" → "Passa a Device Owner".
+- Android 13+: se l'interruttore Accessibilità è grigio → Info app → ⋮ → "Consenti impostazioni con restrizioni".
+
 ## Build e aggiornamento automatico
 - Ogni push su `main` → GitHub Actions compila l'APK firmato e lo carica nella release **`latest`** insieme a `version.json`.
 - L'app controlla `releases/download/latest/version.json` (repo pubblico, nessun token) all'apertura (max 1/h) e ogni 6 h in background; da Device Owner installa **in silenzio**.

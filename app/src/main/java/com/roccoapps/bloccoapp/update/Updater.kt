@@ -75,7 +75,6 @@ object Updater {
 
     /** Dal worker in background: solo se Device Owner (installazione silenziosa garantita). */
     suspend fun autoUpdate(ctx: Context) {
-        if (!Policy.isOwner(ctx)) return
         Prefs.setLastUpdateCheck(ctx, System.currentTimeMillis())
         check() ?: return
         install(ctx, download(ctx))

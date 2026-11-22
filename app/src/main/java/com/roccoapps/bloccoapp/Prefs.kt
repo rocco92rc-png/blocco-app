@@ -61,6 +61,10 @@ object Prefs {
     fun releaseRequestedAt(ctx: Context) = sp(ctx).getLong("release_req", 0L)
     fun setReleaseRequestedAt(ctx: Context, t: Long) = sp(ctx).edit().putLong("release_req", t).apply()
 
+    // Modalità base: senza Device Owner, blocco tramite accessibilità.
+    fun basicMode(ctx: Context) = sp(ctx).getBoolean("basic", false)
+    fun setBasicMode(ctx: Context, on: Boolean) = sp(ctx).edit().putBoolean("basic", on).apply()
+
     fun lastUpdateCheck(ctx: Context) = sp(ctx).getLong("last_upd", 0L)
     fun setLastUpdateCheck(ctx: Context, t: Long) = sp(ctx).edit().putLong("last_upd", t).apply()
 }

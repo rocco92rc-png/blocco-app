@@ -1,4 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Blocco App</string>
+    <string name="acc_desc">Blocco App usa l\'accessibilità solo per capire quale app si sta aprendo e chiudere quelle che hai bloccato. Non legge il contenuto dello schermo.</string>
 </resources>

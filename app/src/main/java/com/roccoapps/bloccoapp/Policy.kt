@@ -19,6 +19,10 @@ object Policy {
     fun dpm(ctx: Context) = ctx.getSystemService(DevicePolicyManager::class.java)!!
     fun isOwner(ctx: Context) = dpm(ctx).isDeviceOwnerApp(ctx.packageName)
 
+    /** App da tenere chiuse adesso (usato dalla modalità base). */
+    fun targets(ctx: Context): Set<String> =
+        Prefs.blocked(ctx) + Limits.suspendedToday(ctx) + Prefs.neverInstall(ctx) - ctx.packageName
+
     /** Riallinea il telefono a quanto salvato. Ritorna le app che Android non ha permesso di bloccare. */
     @Synchronized
     fun apply(ctx: Context): List<String> {

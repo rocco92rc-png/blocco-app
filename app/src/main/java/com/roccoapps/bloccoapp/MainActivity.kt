@@ -63,7 +63,7 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         Policy.apply(this)
-        if (Policy.isOwner(this)) {
+        if (Policy.isOwner(this) || Prefs.basicMode(this)) {
             GuardService.start(this)
             Work.schedule(this)
         }
@@ -98,7 +98,7 @@ class MainActivity : ComponentActivity() {
     private fun Root() {
         val ctx = this
         when {
-            !Policy.isOwner(ctx) -> SetupScreen()
+            !Policy.isOwner(ctx) && !Prefs.basicMode(ctx) -> SetupScreen()
             !Password.isSet(ctx) -> NewPasswordScreen(needOld = false) { refresh++ }
             else -> MainScreen()
         }
@@ -132,7 +132,24 @@ class MainActivity : ComponentActivity() {
             }
             item { Text("4. Torna qui: si apre la schermata per impostare la password. Falla scegliere a un'altra persona.") }
             item {
-                OutlinedButton(onClick = { refresh++ }) { Text("Ho fatto, ricontrolla") }
+                OutlinedButton(onClick = {
+                    if (!Policy.isOwner(this@MainActivity)) toast("Non ancora Device Owner: il comando non è stato eseguito o ha dato errore.")
+                    refresh++
+                }) { Text("Ho fatto, ricontrolla") }
+            }
+            item { HorizontalDivider() }
+            item { Text("Oppure, senza comando:", fontWeight = FontWeight.Bold) }
+            item {
+                Text(
+                    "Modalità base: le app bloccate si chiudono appena le apri (tramite Accessibilità). " +
+                        "È più facile da aggirare: si può disattivare l'accessibilità o disinstallare l'app. " +
+                        "Potrai passare a Device Owner quando vuoi, senza perdere le impostazioni."
+                )
+            }
+            item {
+                Button(onClick = { Prefs.setBasicMode(this@MainActivity, true); refresh++ }) {
+                    Text("Usa modalità base")
+                }
             }
             item {
                 Text(
@@ -247,6 +264,7 @@ class MainActivity : ComponentActivity() {
                 "Blocco App", Modifier.padding(start = 16.dp, top = 12.dp),
                 style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold
             )
+            if (!Policy.isOwner(this@MainActivity)) BasicBanner()
             ScrollableTabRow(selectedTabIndex = tab, edgePadding = 8.dp) {
                 tabs.forEachIndexed { i, t -> Tab(selected = tab == i, onClick = { tab = i }, text = { Text(t) }) }
             }
@@ -261,6 +279,31 @@ class MainActivity : ComponentActivity() {
             }
         }
         Dialogs()
+    }
+
+    @Composable
+    private fun BasicBanner() {
+        val on = BlockAccessibilityService.isEnabled(this)
+        Card(
+            Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = if (on) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.errorContainer
+            )
+        ) {
+            Column(Modifier.padding(12.dp)) {
+                if (on) Text("Modalità base attiva (Accessibilità).", style = MaterialTheme.typography.bodySmall)
+                else {
+                    Text("Attiva \"Blocco App\" in Impostazioni → Accessibilità, altrimenti i blocchi non funzionano.")
+                    Text(
+                        "Se è grigio: Impostazioni → App → Blocco App → ⋮ in alto → \"Consenti impostazioni con restrizioni\", poi riprova.",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                    Button(onClick = { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }) {
+                        Text("Apri Accessibilità")
+                    }
+                }
+            }
+        }
     }
 
     @Composable
@@ -411,7 +454,8 @@ class MainActivity : ComponentActivity() {
         LazyColumn(Modifier.fillMaxSize().padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             item {
                 Text(
-                    "Se una di queste app viene installata, Blocco App la disinstalla subito. " +
+                    (if (Policy.isOwner(this@MainActivity)) "Se una di queste app viene installata, Blocco App la disinstalla subito. "
+                    else "In modalità base queste app, se installate, non si aprono. ") +
                         "La lista si può SOLO allungare.\n\nDal Play Store: apri la pagina dell'app → Condividi → Blocco App.",
                     style = MaterialTheme.typography.bodySmall
                 )
@@ -450,7 +494,13 @@ class MainActivity : ComponentActivity() {
         val scope = rememberCoroutineScope()
         LazyColumn(Modifier.fillMaxSize().padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             item { Text("Protezioni anti-aggiramento", fontWeight = FontWeight.Bold) }
-            items(Protection.values().toList()) { p ->
+            if (!Policy.isOwner(this@MainActivity)) item {
+                Text("Disponibili solo da Device Owner.", style = MaterialTheme.typography.bodySmall)
+                OutlinedButton(onClick = { Prefs.setBasicMode(this@MainActivity, false); refresh++ }) {
+                    Text("Passa a Device Owner")
+                }
+            }
+            if (Policy.isOwner(this@MainActivity)) items(Protection.values().toList()) { p ->
                 val on = Prefs.protection(this@MainActivity, p)
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
