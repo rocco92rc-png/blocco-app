@@ -5,6 +5,8 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.provider.Settings
+import android.os.Handler
+import android.os.Looper
 import android.view.accessibility.AccessibilityEvent
 
 /**
@@ -12,12 +14,44 @@ import android.view.accessibility.AccessibilityEvent
  * e compare la schermata "App bloccata".
  */
 class BlockAccessibilityService : AccessibilityService() {
+    private val handler = Handler(Looper.getMainLooper())
+    private var current: String? = null
+
+    /** Ogni 30 s ricalcola i limiti anche se il servizio in primo piano è stato chiuso dal sistema,
+     *  e butta fuori dall'app aperta se ha appena finito il tempo. */
+    private val loop = object : Runnable {
+        override fun run() {
+            runCatching {
+                if (Limits.tick(this@BlockAccessibilityService)) Policy.apply(this@BlockAccessibilityService)
+                current?.let { if (it in Policy.targets(this@BlockAccessibilityService)) block(it) }
+                GuardService.start(this@BlockAccessibilityService)
+            }
+            handler.postDelayed(this, 30_000)
+        }
+    }
+
+    override fun onServiceConnected() {
+        super.onServiceConnected()
+        handler.post(loop)
+    }
+
+    override fun onDestroy() {
+        handler.removeCallbacks(loop)
+        super.onDestroy()
+    }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event?.eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) return
         val pkg = event.packageName?.toString() ?: return
         if (pkg == packageName) return
+        current = pkg
+        if (pkg in Prefs.limits(this)) runCatching { Limits.tick(this) }
         if (pkg !in Policy.targets(this)) return
+        block(pkg)
+    }
+
+    private fun block(pkg: String) {
+        current = null
         performGlobalAction(GLOBAL_ACTION_HOME)
         startActivity(
             Intent(this, BlockedActivity::class.java)
