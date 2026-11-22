@@ -5,13 +5,29 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Block
+import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Timer
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.delay
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -46,7 +62,14 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         handleShare(intent)
         setContent {
-            MaterialTheme(colorScheme = lightColorScheme()) {
+            val dark = isSystemInDarkTheme()
+            val scheme = when {
+                Build.VERSION.SDK_INT >= 31 && dark -> dynamicDarkColorScheme(this)
+                Build.VERSION.SDK_INT >= 31 -> dynamicLightColorScheme(this)
+                dark -> darkColorScheme()
+                else -> lightColorScheme()
+            }
+            MaterialTheme(colorScheme = scheme) {
                 Surface(Modifier.fillMaxSize()) {
                     Root(refresh)
                 }
@@ -257,27 +280,326 @@ class MainActivity : ComponentActivity() {
         var tab by rememberSaveable { mutableIntStateOf(0) }
         var apps by remember { mutableStateOf<List<AppInfo>?>(null) }
         LaunchedEffect(Unit) { apps = withContext(Dispatchers.IO) { loadApps(this@MainActivity) } }
-        val tabs = listOf("Bloccate", "Limiti", "Mai installare", "Altro")
-        Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().imePadding()) {
-            Text(
-                "Blocco App", Modifier.padding(start = 16.dp, top = 12.dp),
-                style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold
-            )
-            if (!Policy.isOwner(this@MainActivity)) BasicBanner(rev)
-            ScrollableTabRow(selectedTabIndex = tab, edgePadding = 8.dp) {
-                tabs.forEachIndexed { i, t -> Tab(selected = tab == i, onClick = { tab = i }, text = { Text(t) }) }
+        val tabs: List<Pair<String, ImageVector>> = listOf(
+            "Oggi" to Icons.Filled.Home,
+            "Bloccate" to Icons.Filled.Lock,
+            "Limiti" to Icons.Filled.Timer,
+            "Mai inst." to Icons.Filled.Block,
+            "Altro" to Icons.Filled.Settings,
+        )
+        Scaffold(
+            bottomBar = {
+                NavigationBar {
+                    tabs.forEachIndexed { i, (label, icon) ->
+                        NavigationBarItem(
+                            selected = tab == i, onClick = { tab = i },
+                            icon = { Icon(icon, label) }, label = { Text(label, maxLines = 1) }
+                        )
+                    }
+                }
             }
-            val list = apps
-            if (list == null && tab < 2) {
-                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
-            } else when (tab) {
-                0 -> BlockedTab(list!!, rev)
-                1 -> LimitsTab(list!!, rev)
-                2 -> NeverTab(rev)
-                else -> OtherTab(rev)
+        ) { pad ->
+            Column(Modifier.fillMaxSize().padding(pad).imePadding()) {
+                Text(
+                    tabs[tab].first.let { if (tab == 0) "Blocco App" else it },
+                    Modifier.padding(start = 16.dp, top = 12.dp, bottom = 4.dp),
+                    style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold
+                )
+                if (!Policy.isOwner(this@MainActivity)) BasicBanner(rev)
+                val list = apps
+                if (list == null && tab in 1..2) {
+                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
+                } else when (tab) {
+                    0 -> TodayTab(list, rev) { tab = it }
+                    1 -> BlockedTab(list!!, rev)
+                    2 -> LimitsTab(list!!, rev)
+                    3 -> NeverTab(rev)
+                    else -> OtherTab(rev)
+                }
             }
         }
         Dialogs()
+    }
+
+    // ------------------------------------------------------------ Dashboard "Oggi"
+
+    private val labelCache = HashMap<String, String>()
+    private fun labelOf(pkg: String, apps: List<AppInfo>?): String =
+        apps?.firstOrNull { it.pkg == pkg }?.label ?: labelCache.getOrPut(pkg) {
+            runCatching {
+                packageManager.getApplicationLabel(packageManager.getApplicationInfo(pkg, 0)).toString()
+            }.getOrDefault(pkg.substringAfterLast('.'))
+        }
+
+    @Composable
+    private fun TodayTab(apps: List<AppInfo>?, rev: Int, goTo: (Int) -> Unit) {
+        var rep by remember { mutableStateOf<UsageReport?>(null) }
+        var loaded by remember { mutableStateOf(false) }
+        LaunchedEffect(rev) {
+            while (true) {
+                rep = withContext(Dispatchers.IO) { runCatching { Stats.report(this@MainActivity) }.getOrNull() }
+                loaded = true
+                delay(60_000)
+            }
+        }
+        val r = rep
+        if (!Limits.hasUsageAccess(this)) {
+            Card(Modifier.fillMaxWidth().padding(16.dp)) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Per vedere grafici e tempi serve \"Accesso ai dati di utilizzo\".", fontWeight = FontWeight.Bold)
+                    Text("Serve anche per far funzionare i limiti giornalieri.")
+                    Button(onClick = { startActivity(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS)) }) { Text("Concedi accesso") }
+                }
+            }
+            return
+        }
+        if (!loaded || r == null) {
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
+            return
+        }
+        val blocked = Prefs.blocked(this)
+        val limits = Prefs.limits(this)
+        val over = Limits.suspendedToday(this)
+        val top = r.appToday.entries.sortedByDescending { it.value }.filter { it.value >= 60_000 }.take(15)
+        LazyColumn(
+            Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            item { HeroCard(r, blocked.size, limits.size) }
+            item {
+                ChartCard("Ultimi 7 giorni") { WeekChart(r) }
+            }
+            item {
+                ChartCard("Oggi, ora per ora") { HourChart(r.hourToday) }
+            }
+            if (limits.isNotEmpty()) item {
+                ChartCard("Limiti di oggi") {
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        limits.entries.sortedBy { labelOf(it.key, apps) }.forEach { (pkg, min) ->
+                            val used = r.appToday[pkg] ?: 0L
+                            val frac = (used.toFloat() / (min * 60_000f)).coerceIn(0f, 1f)
+                            val done = pkg in over
+                            Column {
+                                Row {
+                                    Text(labelOf(pkg, apps), Modifier.weight(1f))
+                                    Text(
+                                        if (done) "finito" else "${Stats.fmt(used)} / $min min",
+                                        color = if (done) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                                        style = MaterialTheme.typography.bodySmall
+                                    )
+                                }
+                                LinearProgressIndicator(
+                                    progress = { frac },
+                                    Modifier.fillMaxWidth().height(8.dp).clip(RoundedCornerShape(4.dp)),
+                                    color = if (frac >= 1f || done) MaterialTheme.colorScheme.error
+                                    else if (frac > 0.75f) Color(0xFFE6A100) else MaterialTheme.colorScheme.primary,
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+            item {
+                Text("App più usate oggi", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            }
+            if (top.isEmpty()) item { Text("Ancora niente oggi. Bene così.") }
+            val max = top.firstOrNull()?.value ?: 1L
+            items(top, key = { it.key }) { (pkg, ms) ->
+                val info = apps?.firstOrNull { it.pkg == pkg }
+                Card(Modifier.fillMaxWidth().clickable { quickPkg = pkg }) {
+                    Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                        info?.icon?.let { Image(it, null, Modifier.size(40.dp)) } ?: Spacer(Modifier.size(40.dp))
+                        Column(Modifier.weight(1f).padding(start = 12.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(labelOf(pkg, apps), Modifier.weight(1f), fontWeight = FontWeight.Medium, maxLines = 1)
+                                Text(Stats.fmt(ms), fontWeight = FontWeight.Bold)
+                            }
+                            Spacer(Modifier.height(6.dp))
+                            Box(
+                                Modifier.fillMaxWidth((ms.toFloat() / max).coerceIn(0.03f, 1f)).height(6.dp)
+                                    .clip(RoundedCornerShape(3.dp)).background(MaterialTheme.colorScheme.primary)
+                            )
+                            Spacer(Modifier.height(4.dp))
+                            val tags = buildList {
+                                add("${r.opensToday[pkg] ?: 0} aperture")
+                                if (pkg in blocked) add("🔒 bloccata")
+                                limits[pkg]?.let { add("⏱ limite $it min") }
+                            }
+                            Text(tags.joinToString(" · "), style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
+                }
+            }
+            item {
+                Text(
+                    "Tocca un'app per bloccarla o darle un limite.",
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+        quickPkg?.let { pkg -> QuickActions(pkg, labelOf(pkg, apps), goTo) }
+    }
+
+    private var quickPkg by mutableStateOf<String?>(null)
+
+    @Composable
+    private fun QuickActions(pkg: String, label: String, goTo: (Int) -> Unit) {
+        val isBlocked = pkg in Prefs.blocked(this)
+        val hasLimit = pkg in Prefs.limits(this)
+        var limitMode by remember { mutableStateOf(false) }
+        var min by remember { mutableStateOf("30") }
+        AlertDialog(
+            onDismissRequest = { quickPkg = null },
+            title = { Text(label) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (limitMode) {
+                        OutlinedTextField(
+                            min, { min = it.filter(Char::isDigit).take(4) }, label = { Text("Minuti al giorno") },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), singleLine = true
+                        )
+                        Text("Dopo il salvataggio NON si potrà più modificare.", color = MaterialTheme.colorScheme.error)
+                    } else {
+                        if (!isBlocked) Button(onClick = {
+                            Prefs.setBlocked(this@MainActivity, Prefs.blocked(this@MainActivity) + pkg)
+                            Policy.apply(this@MainActivity); quickPkg = null; refresh++
+                        }, Modifier.fillMaxWidth()) { Text("🔒 Blocca sempre") }
+                        else Text("È già bloccata.")
+                        if (!hasLimit) OutlinedButton(onClick = { limitMode = true }, Modifier.fillMaxWidth()) {
+                            Text("⏱ Imposta limite giornaliero")
+                        } else Text("Ha già un limite (non modificabile).")
+                    }
+                }
+            },
+            confirmButton = {
+                if (limitMode) TextButton(enabled = (min.toIntOrNull() ?: 0) in 1..1440, onClick = {
+                    val m = min.toInt(); quickPkg = null
+                    withConfirm("Confermi?", "$label: $m minuti al giorno, per sempre.") {
+                        Prefs.addLimit(this@MainActivity, pkg, m)
+                        Limits.tick(this@MainActivity); Policy.apply(this@MainActivity)
+                    }
+                }) { Text("Salva") }
+            },
+            dismissButton = { TextButton(onClick = { quickPkg = null }) { Text("Chiudi") } }
+        )
+    }
+
+    @Composable
+    private fun HeroCard(r: UsageReport, nBlocked: Int, nLimits: Int) {
+        Card(
+            Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
+        ) {
+            Column(Modifier.padding(20.dp)) {
+                Text("Tempo sullo schermo oggi", style = MaterialTheme.typography.labelLarge)
+                Text(Stats.fmt(r.today), fontSize = 40.sp, fontWeight = FontWeight.Bold)
+                val diff = r.today - r.yesterday
+                if (r.yesterday > 0) Text(
+                    (if (diff <= 0) "▼ " else "▲ ") + Stats.fmt(kotlin.math.abs(diff)) +
+                        (if (diff <= 0) " meno di ieri" else " più di ieri (finora)"),
+                    color = if (diff <= 0) Color(0xFF2E7D32) else MaterialTheme.colorScheme.error,
+                    fontWeight = FontWeight.Medium
+                )
+                Spacer(Modifier.height(12.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Stat("${r.opensTotal}", "aperture")
+                    Stat("$nBlocked", "bloccate")
+                    Stat("$nLimits", "con limite")
+                    val avg = r.dayTotals.dropLast(1).filter { it > 0 }.let { if (it.isEmpty()) 0L else it.sum() / it.size }
+                    Stat(if (avg > 0) Stats.fmt(avg).replace(" min", "m").replace(" h ", "h ") else "-", "media/g")
+                }
+            }
+        }
+    }
+
+    @Composable
+    private fun RowScope.Stat(value: String, label: String) {
+        Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
+            Text(value, fontWeight = FontWeight.Bold, maxLines = 1)
+            Text(label, style = MaterialTheme.typography.bodySmall, maxLines = 1)
+        }
+    }
+
+    @Composable
+    private fun ChartCard(title: String, content: @Composable () -> Unit) {
+        Card(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(16.dp)) {
+                Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(12.dp))
+                content()
+            }
+        }
+    }
+
+    @Composable
+    private fun WeekChart(r: UsageReport) {
+        val max = (r.dayTotals.maxOrNull() ?: 0L).coerceAtLeast(60_000L)
+        val names = listOf("Dom", "Lun", "Mar", "Mer", "Gio", "Ven", "Sab")
+        val barH = 120.dp
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.Bottom) {
+            r.dayTotals.forEachIndexed { i, ms ->
+                val isToday = i == r.dayTotals.lastIndex
+                val dow = java.util.Calendar.getInstance().apply { timeInMillis = r.dayStarts[i] }
+                    .get(java.util.Calendar.DAY_OF_WEEK) - 1
+                Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
+                    val h = ms / 3_600_000.0
+                    Text(
+                        if (ms < 60_000) "" else if (h >= 1) "%.1fh".format(h) else "${ms / 60_000}m",
+                        style = MaterialTheme.typography.labelSmall, maxLines = 1
+                    )
+                    Box(Modifier.height(barH).fillMaxWidth(), contentAlignment = Alignment.BottomCenter) {
+                        Box(
+                            Modifier.fillMaxWidth().fillMaxHeight((ms.toFloat() / max).coerceIn(0.02f, 1f))
+                                .clip(RoundedCornerShape(topStart = 6.dp, topEnd = 6.dp))
+                                .background(
+                                    if (isToday) MaterialTheme.colorScheme.primary
+                                    else MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)
+                                )
+                        )
+                    }
+                    Text(
+                        if (isToday) "Oggi" else names[dow], style = MaterialTheme.typography.labelSmall,
+                        fontWeight = if (isToday) FontWeight.Bold else FontWeight.Normal
+                    )
+                }
+            }
+        }
+    }
+
+    @Composable
+    private fun HourChart(hours: LongArray) {
+        val max = (hours.maxOrNull() ?: 0L).coerceAtLeast(60_000L)
+        val now = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
+        Column {
+            Row(Modifier.fillMaxWidth().height(90.dp), horizontalArrangement = Arrangement.spacedBy(2.dp), verticalAlignment = Alignment.Bottom) {
+                hours.forEachIndexed { h, ms ->
+                    Box(
+                        Modifier.weight(1f).fillMaxHeight((ms.toFloat() / max).coerceIn(0.02f, 1f))
+                            .clip(RoundedCornerShape(topStart = 3.dp, topEnd = 3.dp))
+                            .background(
+                                when {
+                                    h == now -> MaterialTheme.colorScheme.primary
+                                    h > now -> MaterialTheme.colorScheme.surfaceVariant
+                                    else -> MaterialTheme.colorScheme.primary.copy(alpha = 0.45f)
+                                }
+                            )
+                    )
+                }
+            }
+            Row(Modifier.fillMaxWidth()) {
+                listOf("0", "6", "12", "18", "24").forEachIndexed { i, t ->
+                    Text(
+                        t, Modifier.weight(1f), style = MaterialTheme.typography.labelSmall,
+                        textAlign = when (i) { 0 -> TextAlign.Start; 4 -> TextAlign.End; else -> TextAlign.Center }
+                    )
+                }
+            }
+            val peak = hours.indices.maxByOrNull { hours[it] } ?: 0
+            if (hours[peak] >= 60_000) Text(
+                "Ora più intensa: ${peak}:00–${peak + 1}:00 (${Stats.fmt(hours[peak])})",
+                style = MaterialTheme.typography.bodySmall
+            )
+        }
     }
 
     @Composable
