@@ -1,0 +1,51 @@
+name: Build APK
+on:
+  push:
+    branches: [ main ]
+    paths-ignore:
+      - '**/*.md'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Gradle cache
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Build release APK
+        run: chmod +x gradlew && ./gradlew :app:assembleRelease --no-daemon --stacktrace
+
+      - name: Pubblica release "latest" (APK + version.json per l'aggiornamento automatico)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          APK=$(ls app/build/outputs/apk/release/*.apk | head -1)
+          cp "$APK" app-release.apk
+          VC=${GITHUB_RUN_NUMBER}
+          NOTES=$(git log -1 --pretty=%s | head -c 300)
+          python3 - "$VC" "${GITHUB_SHA:0:7}" "$NOTES" > version.json <<'PY'
+          import sys, json, time
+          vc = int(sys.argv[1])
+          print(json.dumps({"versionCode": vc, "versionName": "1.0." + str(vc),
+                            "commit": sys.argv[2], "notes": sys.argv[3],
+                            "time": int(time.time() * 1000)}, ensure_ascii=False))
+          PY
+          gh release view latest >/dev/null 2>&1 || \
+            gh release create latest --title "Ultima versione" --notes "APK aggiornato automaticamente dalla CI." --latest
+          # Prima l'APK, poi version.json: l'app vede la versione nuova solo quando l'APK è già pronto.
+          gh release upload latest app-release.apk --clobber
+          gh release upload latest version.json --clobber
+          echo "Pubblicata versionCode=$VC"
