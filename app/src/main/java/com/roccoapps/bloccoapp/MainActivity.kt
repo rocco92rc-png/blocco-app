@@ -48,8 +48,7 @@ class MainActivity : ComponentActivity() {
         setContent {
             MaterialTheme(colorScheme = lightColorScheme()) {
                 Surface(Modifier.fillMaxSize()) {
-                    @Suppress("UNUSED_EXPRESSION") refresh
-                    Root()
+                    Root(refresh)
                 }
             }
         }
@@ -95,17 +94,17 @@ class MainActivity : ComponentActivity() {
     // ---------------------------------------------------------------- UI
 
     @Composable
-    private fun Root() {
+    private fun Root(rev: Int) {
         val ctx = this
         when {
-            !Policy.isOwner(ctx) && !Prefs.basicMode(ctx) -> SetupScreen()
+            !Policy.isOwner(ctx) && !Prefs.basicMode(ctx) -> SetupScreen(rev)
             !Password.isSet(ctx) -> NewPasswordScreen(needOld = false) { refresh++ }
-            else -> MainScreen()
+            else -> MainScreen(rev)
         }
     }
 
     @Composable
-    private fun SetupScreen() {
+    private fun SetupScreen(rev: Int) {
         val cmd = "adb shell dpm set-device-owner $packageName/.AdminReceiver"
         LazyColumn(Modifier.fillMaxSize().padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             item { Text("Attivazione (una volta sola)", style = MaterialTheme.typography.headlineSmall) }
@@ -254,17 +253,17 @@ class MainActivity : ComponentActivity() {
     // ---- schermata principale
 
     @Composable
-    private fun MainScreen() {
+    private fun MainScreen(rev: Int) {
         var tab by rememberSaveable { mutableIntStateOf(0) }
         var apps by remember { mutableStateOf<List<AppInfo>?>(null) }
-        LaunchedEffect(refresh) { apps = withContext(Dispatchers.IO) { loadApps(this@MainActivity) } }
+        LaunchedEffect(Unit) { apps = withContext(Dispatchers.IO) { loadApps(this@MainActivity) } }
         val tabs = listOf("Bloccate", "Limiti", "Mai installare", "Altro")
         Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().imePadding()) {
             Text(
                 "Blocco App", Modifier.padding(start = 16.dp, top = 12.dp),
                 style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold
             )
-            if (!Policy.isOwner(this@MainActivity)) BasicBanner()
+            if (!Policy.isOwner(this@MainActivity)) BasicBanner(rev)
             ScrollableTabRow(selectedTabIndex = tab, edgePadding = 8.dp) {
                 tabs.forEachIndexed { i, t -> Tab(selected = tab == i, onClick = { tab = i }, text = { Text(t) }) }
             }
@@ -272,17 +271,17 @@ class MainActivity : ComponentActivity() {
             if (list == null && tab < 2) {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
             } else when (tab) {
-                0 -> BlockedTab(list!!)
-                1 -> LimitsTab(list!!)
-                2 -> NeverTab()
-                else -> OtherTab()
+                0 -> BlockedTab(list!!, rev)
+                1 -> LimitsTab(list!!, rev)
+                2 -> NeverTab(rev)
+                else -> OtherTab(rev)
             }
         }
         Dialogs()
     }
 
     @Composable
-    private fun BasicBanner() {
+    private fun BasicBanner(rev: Int) {
         val on = BlockAccessibilityService.isEnabled(this)
         Card(
             Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
@@ -331,7 +330,7 @@ class MainActivity : ComponentActivity() {
     }
 
     @Composable
-    private fun BlockedTab(apps: List<AppInfo>) {
+    private fun BlockedTab(apps: List<AppInfo>, rev: Int) {
         val blocked = Prefs.blocked(this)
         var q by rememberSaveable { mutableStateOf("") }
         val shown = apps.filter { q.isBlank() || it.label.contains(q, true) }
@@ -364,10 +363,10 @@ class MainActivity : ComponentActivity() {
     }
 
     @Composable
-    private fun LimitsTab(apps: List<AppInfo>) {
+    private fun LimitsTab(apps: List<AppInfo>, rev: Int) {
         val limits = Prefs.limits(this)
         val access = Limits.hasUsageAccess(this)
-        val used = remember(refresh) { Limits.usageToday(this, limits.keys) }
+        val used = remember(rev) { Limits.usageToday(this, limits.keys) }
         val over = Limits.suspendedToday(this)
         var q by rememberSaveable { mutableStateOf("") }
         var editing by remember { mutableStateOf<AppInfo?>(null) }
@@ -448,7 +447,7 @@ class MainActivity : ComponentActivity() {
     )
 
     @Composable
-    private fun NeverTab() {
+    private fun NeverTab(rev: Int) {
         val never = Prefs.neverInstall(this)
         var text by rememberSaveable { mutableStateOf("") }
         LazyColumn(Modifier.fillMaxSize().padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -485,7 +484,7 @@ class MainActivity : ComponentActivity() {
     }
 
     @Composable
-    private fun OtherTab() {
+    private fun OtherTab(rev: Int) {
         var changePw by remember { mutableStateOf(false) }
         if (changePw) {
             NewPasswordScreen(needOld = true) { changePw = false }
