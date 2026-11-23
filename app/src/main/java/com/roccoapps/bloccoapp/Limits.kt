@@ -65,6 +65,26 @@ object Limits {
         return res
     }
 
+    /** App attualmente in primo piano secondo i dati di utilizzo (null se non si sa). */
+    fun foregroundApp(ctx: Context): String? {
+        if (!hasUsageAccess(ctx)) return null
+        val usm = ctx.getSystemService(UsageStatsManager::class.java) ?: return null
+        val now = System.currentTimeMillis()
+        val events = usm.queryEvents(now - 6 * 3_600_000L, now) ?: return null
+        val open = LinkedHashMap<String, Long>()
+        val e = UsageEvents.Event()
+        while (events.hasNextEvent()) {
+            events.getNextEvent(e)
+            val p = e.packageName ?: continue
+            when (e.eventType) {
+                1 -> { open.remove(p); open[p] = e.timeStamp }
+                2, 23 -> open.remove(p)
+                16, 26 -> open.clear()
+            }
+        }
+        return open.entries.maxByOrNull { it.value }?.key
+    }
+
     /** Ricalcola chi ha superato il limite. true = l'elenco delle app sospese è cambiato. */
     fun tick(ctx: Context): Boolean {
         val limits = Prefs.limits(ctx)

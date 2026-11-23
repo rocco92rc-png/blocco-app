@@ -37,11 +37,27 @@ class BlockAccessibilityService : AccessibilityService() {
     private var countPkg: String? = null
     private var endAt = 0L            // elapsedRealtime in cui finisce il tempo
     private var lastTick = 0L
+    private var lastSync = 0L
+
+    /** Ogni 5 s: quale app è davvero in primo piano (dati di utilizzo, non eventi). */
+    private val watcher = object : Runnable {
+        override fun run() {
+            runCatching {
+                val fg = Limits.foregroundApp(this@BlockAccessibilityService)
+                val limited = fg != null && fg in Prefs.limits(this@BlockAccessibilityService)
+                when {
+                    !limited -> if (countPkg != null) stopCountdown()
+                    fg in Policy.targets(this@BlockAccessibilityService) -> { stopCountdown(); block(fg!!) }
+                    fg != countPkg || SystemClock.elapsedRealtime() - lastSync > 30_000 -> startCountdown(fg!!)
+                }
+            }
+            handler.postDelayed(this, 5_000)
+        }
+    }
 
     private val countdown = object : Runnable {
         override fun run() {
-            val pkg = countPkg
-            if (pkg == null || current != pkg) { stopCountdown(); return }
+            val pkg = countPkg ?: return
             val now = SystemClock.elapsedRealtime()
             // Schermo spento: il tempo non scorre (Android non lo conta come utilizzo).
             if (!getSystemService(PowerManager::class.java).isInteractive) endAt += now - lastTick
@@ -66,12 +82,14 @@ class BlockAccessibilityService : AccessibilityService() {
 
     private fun overlay() = overlay ?: CountdownOverlay(this).also { overlay = it }
 
+    /** Avvia o riallinea il conto alla rovescia col tempo reale rimasto. */
     private fun startCountdown(pkg: String) {
         val lim = Prefs.limits(this)[pkg] ?: return
         val used = Limits.usageToday(this, setOf(pkg))[pkg] ?: 0L
         handler.removeCallbacks(countdown)
         countPkg = pkg
         lastTick = SystemClock.elapsedRealtime()
+        lastSync = lastTick
         endAt = lastTick + (lim * 60_000L - used)
         handler.post(countdown)
     }
@@ -92,10 +110,12 @@ class BlockAccessibilityService : AccessibilityService() {
     override fun onServiceConnected() {
         super.onServiceConnected()
         handler.post(loop)
+        handler.post(watcher)
     }
 
     override fun onDestroy() {
         handler.removeCallbacks(loop)
+        handler.removeCallbacks(watcher)
         stopCountdown()
         super.onDestroy()
     }
@@ -104,14 +124,12 @@ class BlockAccessibilityService : AccessibilityService() {
         if (event?.eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) return
         val pkg = event.packageName?.toString() ?: return
         if (isNoise(pkg)) return
-        if (pkg == packageName) { current = pkg; stopCountdown(); return }
-        val changed = pkg != current
         current = pkg
+        if (pkg == packageName) return
         if (pkg in Prefs.limits(this)) runCatching { Limits.tick(this) }
         if (pkg in Policy.targets(this)) { stopCountdown(); block(pkg); return }
-        if (changed) {
-            if (pkg in Prefs.limits(this)) startCountdown(pkg) else stopCountdown()
-        }
+        // Avvio immediato quando si entra in un'app con limite (il watcher poi lo tiene allineato).
+        if (pkg in Prefs.limits(this) && pkg != countPkg) startCountdown(pkg)
     }
 
     private fun block(pkg: String) {
