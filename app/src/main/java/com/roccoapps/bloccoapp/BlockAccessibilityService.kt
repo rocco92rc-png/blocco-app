@@ -24,10 +24,11 @@ class BlockAccessibilityService : AccessibilityService() {
     private val loop = object : Runnable {
         override fun run() {
             runCatching {
+                Prefs.setDiag(this@BlockAccessibilityService, "acc_loop", System.currentTimeMillis().toString())
                 if (Limits.tick(this@BlockAccessibilityService)) Policy.apply(this@BlockAccessibilityService)
                 current?.let { if (it in Policy.targets(this@BlockAccessibilityService)) block(it) }
                 GuardService.start(this@BlockAccessibilityService)
-            }
+            }.onFailure { Prefs.setDiag(this@BlockAccessibilityService, "err", "acc loop: $it") }
             handler.postDelayed(this, 30_000)
         }
     }
@@ -44,13 +45,15 @@ class BlockAccessibilityService : AccessibilityService() {
         override fun run() {
             runCatching {
                 val fg = Limits.foregroundApp(this@BlockAccessibilityService)
+                Prefs.setDiag(this@BlockAccessibilityService, "fg", fg ?: "(nessuna)")
+                Prefs.setDiag(this@BlockAccessibilityService, "acc_loop", System.currentTimeMillis().toString())
                 val limited = fg != null && fg in Prefs.limits(this@BlockAccessibilityService)
                 when {
                     !limited -> if (countPkg != null) stopCountdown()
                     fg in Policy.targets(this@BlockAccessibilityService) -> { stopCountdown(); block(fg!!) }
                     fg != countPkg || SystemClock.elapsedRealtime() - lastSync > 30_000 -> startCountdown(fg!!)
                 }
-            }
+            }.onFailure { Prefs.setDiag(this@BlockAccessibilityService, "err", "watcher: $it") }
             handler.postDelayed(this, 5_000)
         }
     }
@@ -109,6 +112,7 @@ class BlockAccessibilityService : AccessibilityService() {
 
     override fun onServiceConnected() {
         super.onServiceConnected()
+        Prefs.setDiag(this, "acc_conn", System.currentTimeMillis().toString())
         handler.post(loop)
         handler.post(watcher)
     }

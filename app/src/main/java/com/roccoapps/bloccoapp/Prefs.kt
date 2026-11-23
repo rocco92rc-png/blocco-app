@@ -65,6 +65,10 @@ object Prefs {
     fun basicMode(ctx: Context) = sp(ctx).getBoolean("basic", false)
     fun setBasicMode(ctx: Context, on: Boolean) = sp(ctx).edit().putBoolean("basic", on).apply()
 
+    // Diagnostica: segnali di vita dei servizi e ultimo errore.
+    fun diag(ctx: Context, key: String): String? = sp(ctx).getString("diag_" + key, null)
+    fun setDiag(ctx: Context, key: String, v: String) = sp(ctx).edit().putString("diag_" + key, v).apply()
+
     fun lastUpdateCheck(ctx: Context) = sp(ctx).getLong("last_upd", 0L)
     fun setLastUpdateCheck(ctx: Context, t: Long) = sp(ctx).edit().putLong("last_upd", t).apply()
 }

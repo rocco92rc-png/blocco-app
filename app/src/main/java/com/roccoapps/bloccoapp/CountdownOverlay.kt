@@ -39,6 +39,7 @@ class CountdownOverlay(private val ctx: Context) {
                 y = (36 * d).toInt()
             }
             runCatching { wm.addView(tv, lp) }
+                .onFailure { Prefs.setDiag(ctx, "err", "overlay: $it") }
             view = tv
         }
         bg.setColor(if (urgent) Color.parseColor("#E6C62828") else Color.parseColor("#E6333333"))

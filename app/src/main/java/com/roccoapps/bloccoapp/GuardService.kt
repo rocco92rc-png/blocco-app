@@ -32,10 +32,11 @@ class GuardService : Service() {
     private val loop = object : Runnable {
         override fun run() {
             runCatching {
+                Prefs.setDiag(this@GuardService, "guard_loop", System.currentTimeMillis().toString())
                 val day = Limits.today()
                 val changed = Limits.tick(this@GuardService)
                 if (changed || day != lastDay) { lastDay = day; Policy.apply(this@GuardService) }
-            }
+            }.onFailure { Prefs.setDiag(this@GuardService, "err", "guard: $it") }
             handler.postDelayed(this, 20_000)
         }
     }

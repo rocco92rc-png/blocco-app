@@ -485,6 +485,42 @@ class MainActivity : ComponentActivity() {
     }
 
     @Composable
+    private fun DiagnosticsCard(rev: Int) {
+        var tick by remember { mutableIntStateOf(0) }
+        LaunchedEffect(Unit) { while (true) { delay(3_000); tick++ } }
+        @Suppress("UNUSED_EXPRESSION") tick
+        val ctx = this
+        fun ago(key: String): String {
+            val t = Prefs.diag(ctx, key)?.toLongOrNull() ?: return "mai ❌"
+            val s = (System.currentTimeMillis() - t) / 1000
+            return if (s < 90) "$s s fa ✅" else if (s < 3600) "${s / 60} min fa ⚠️" else "${s / 3600} h fa ❌"
+        }
+        val limits = Prefs.limits(ctx)
+        val used = Limits.usageToday(ctx, limits.keys)
+        val over = Limits.suspendedToday(ctx)
+        val lines = buildList {
+            add("Versione: ${BuildConfig.VERSION_NAME}")
+            add("Modalità: " + if (Policy.isOwner(ctx)) "Device Owner" else "base")
+            add("Dati di utilizzo: " + if (Limits.hasUsageAccess(ctx)) "sì ✅" else "NO ❌")
+            add("Accessibilità attivata: " + if (BlockAccessibilityService.isEnabled(ctx)) "sì ✅" else "NO ❌")
+            add("Accessibilità collegata: " + ago("acc_conn"))
+            add("Accessibilità ultimo controllo: " + ago("acc_loop"))
+            add("Servizio limiti ultimo controllo: " + ago("guard_loop"))
+            add("App in primo piano rilevata: " + (Prefs.diag(ctx, "fg")?.let { labelOf(it, null) } ?: "-"))
+            limits.forEach { (p, m) ->
+                add("• ${labelOf(p, null)}: ${Stats.fmt(used[p] ?: 0L)} / $m min" + if (p in over) " → BLOCCATA" else "")
+            }
+            Prefs.diag(ctx, "err")?.let { add("Ultimo errore: $it") }
+        }
+        Card(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text("Diagnostica", fontWeight = FontWeight.Bold)
+                lines.forEach { Text(it, style = MaterialTheme.typography.bodySmall) }
+            }
+        }
+    }
+
+    @Composable
     private fun HeroCard(r: UsageReport, nBlocked: Int, nLimits: Int) {
         Card(
             Modifier.fillMaxWidth(),
@@ -849,6 +885,8 @@ class MainActivity : ComponentActivity() {
                     }
                 }) { Text("Controlla aggiornamenti") }
             }
+            item { HorizontalDivider() }
+            item { DiagnosticsCard(rev) }
             item { HorizontalDivider() }
             item { Text("Uscita d'emergenza", fontWeight = FontWeight.Bold) }
             item {
