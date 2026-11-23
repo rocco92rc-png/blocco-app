@@ -7,6 +7,8 @@ import android.content.Intent
 import android.provider.Settings
 import android.os.Handler
 import android.os.Looper
+import android.os.PowerManager
+import android.os.SystemClock
 import android.view.accessibility.AccessibilityEvent
 
 /**
@@ -30,6 +32,63 @@ class BlockAccessibilityService : AccessibilityService() {
         }
     }
 
+    // ---- countdown in sovraimpressione per le app con limite
+    private var overlay: CountdownOverlay? = null
+    private var countPkg: String? = null
+    private var endAt = 0L            // elapsedRealtime in cui finisce il tempo
+    private var lastTick = 0L
+
+    private val countdown = object : Runnable {
+        override fun run() {
+            val pkg = countPkg
+            if (pkg == null || current != pkg) { stopCountdown(); return }
+            val now = SystemClock.elapsedRealtime()
+            // Schermo spento: il tempo non scorre (Android non lo conta come utilizzo).
+            if (!getSystemService(PowerManager::class.java).isInteractive) endAt += now - lastTick
+            lastTick = now
+            val rem = endAt - now
+            when {
+                rem <= 0 -> {
+                    stopCountdown()
+                    val day = Limits.today()
+                    Prefs.setOverLimit(this@BlockAccessibilityService, day, Prefs.overLimit(this@BlockAccessibilityService, day) + pkg)
+                    Policy.apply(this@BlockAccessibilityService)
+                    block(pkg)
+                    return
+                }
+                rem <= 60_000 -> overlay().show("⏱ ${(rem + 999) / 1000} s", urgent = true)
+                rem <= WARN_MS -> overlay().show("⏱ ${(rem + 59_999) / 60_000} min", urgent = false)
+                else -> overlay?.hide()
+            }
+            handler.postDelayed(this, 1_000)
+        }
+    }
+
+    private fun overlay() = overlay ?: CountdownOverlay(this).also { overlay = it }
+
+    private fun startCountdown(pkg: String) {
+        val lim = Prefs.limits(this)[pkg] ?: return
+        val used = Limits.usageToday(this, setOf(pkg))[pkg] ?: 0L
+        handler.removeCallbacks(countdown)
+        countPkg = pkg
+        lastTick = SystemClock.elapsedRealtime()
+        endAt = lastTick + (lim * 60_000L - used)
+        handler.post(countdown)
+    }
+
+    private fun stopCountdown() {
+        handler.removeCallbacks(countdown)
+        countPkg = null
+        overlay?.hide()
+    }
+
+    /** Eventi da ignorare: tastiera e interfaccia di sistema non sono un "cambio app". */
+    private fun isNoise(pkg: String): Boolean {
+        if (pkg == "com.android.systemui") return true
+        val ime = Settings.Secure.getString(contentResolver, Settings.Secure.DEFAULT_INPUT_METHOD) ?: return false
+        return ime.substringBefore('/') == pkg
+    }
+
     override fun onServiceConnected() {
         super.onServiceConnected()
         handler.post(loop)
@@ -37,17 +96,22 @@ class BlockAccessibilityService : AccessibilityService() {
 
     override fun onDestroy() {
         handler.removeCallbacks(loop)
+        stopCountdown()
         super.onDestroy()
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event?.eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) return
         val pkg = event.packageName?.toString() ?: return
-        if (pkg == packageName) return
+        if (isNoise(pkg)) return
+        if (pkg == packageName) { current = pkg; stopCountdown(); return }
+        val changed = pkg != current
         current = pkg
         if (pkg in Prefs.limits(this)) runCatching { Limits.tick(this) }
-        if (pkg !in Policy.targets(this)) return
-        block(pkg)
+        if (pkg in Policy.targets(this)) { stopCountdown(); block(pkg); return }
+        if (changed) {
+            if (pkg in Prefs.limits(this)) startCountdown(pkg) else stopCountdown()
+        }
     }
 
     private fun block(pkg: String) {
@@ -63,6 +127,9 @@ class BlockAccessibilityService : AccessibilityService() {
     override fun onInterrupt() = Unit
 
     companion object {
+        /** Da quanto prima della fine compare il conto alla rovescia. */
+        const val WARN_MS = 5 * 60_000L
+
         fun isEnabled(ctx: Context): Boolean {
             val me = ComponentName(ctx, BlockAccessibilityService::class.java).flattenToString()
             val on = Settings.Secure.getString(ctx.contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES) ?: ""
