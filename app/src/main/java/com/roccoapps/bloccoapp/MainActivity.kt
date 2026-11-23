@@ -344,12 +344,10 @@ class MainActivity : ComponentActivity() {
         }
         val r = rep
         if (!Limits.hasUsageAccess(this)) {
-            Card(Modifier.fillMaxWidth().padding(16.dp)) {
-                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Per vedere grafici e tempi serve \"Accesso ai dati di utilizzo\".", fontWeight = FontWeight.Bold)
-                    Text("Serve anche per far funzionare i limiti giornalieri.")
-                    Button(onClick = { startActivity(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS)) }) { Text("Concedi accesso") }
-                }
+            Column(Modifier.fillMaxSize().padding(16.dp)) {
+                Text("Per vedere grafici e tempi serve \"Accesso ai dati di utilizzo\".", fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(8.dp))
+                PermissionsCard(rev)
             }
             return
         }
@@ -365,6 +363,7 @@ class MainActivity : ComponentActivity() {
             Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
+            if (Checks.missing(this@MainActivity) > 0) item { PermissionsCard(rev) }
             item { HeroCard(r, blocked.size, limits.size) }
             item {
                 ChartCard("Ultimi 7 giorni") { WeekChart(r) }
@@ -482,6 +481,46 @@ class MainActivity : ComponentActivity() {
             },
             dismissButton = { TextButton(onClick = { quickPkg = null }) { Text("Chiudi") } }
         )
+    }
+
+    @Composable
+    private fun PermissionsCard(rev: Int) {
+        var tick by remember { mutableIntStateOf(0) }
+        LaunchedEffect(Unit) { while (true) { delay(3_000); tick++ } }
+        @Suppress("UNUSED_EXPRESSION") tick
+        val checks = Checks.all(this)
+        val bad = checks.count { it.ok == false }
+        Card(
+            Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(
+                containerColor = if (bad == 0) MaterialTheme.colorScheme.secondaryContainer
+                else MaterialTheme.colorScheme.errorContainer
+            )
+        ) {
+            Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    if (bad == 0) "Verifica autorizzazioni: tutto ok ✅" else "Verifica autorizzazioni: mancano $bad ❌",
+                    fontWeight = FontWeight.Bold
+                )
+                checks.forEach { c ->
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(when (c.ok) { true -> "✅"; false -> "❌"; null -> "❔" }, Modifier.width(28.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(c.title, fontWeight = FontWeight.Medium)
+                            Text(c.why, style = MaterialTheme.typography.bodySmall)
+                        }
+                        if (c.ok != true && c.fix != null) TextButton(onClick = {
+                            runCatching { startActivity(c.fix.invoke()) }.onFailure {
+                                runCatching {
+                                    startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                                        android.net.Uri.parse("package:$packageName")))
+                                }
+                            }
+                        }) { Text(if (c.ok == null) "Apri" else "Sistema") }
+                    }
+                }
+            }
+        }
     }
 
     @Composable
@@ -886,6 +925,7 @@ class MainActivity : ComponentActivity() {
                 }) { Text("Controlla aggiornamenti") }
             }
             item { HorizontalDivider() }
+            item { PermissionsCard(rev) }
             item { DiagnosticsCard(rev) }
             item { HorizontalDivider() }
             item { Text("Uscita d'emergenza", fontWeight = FontWeight.Bold) }
