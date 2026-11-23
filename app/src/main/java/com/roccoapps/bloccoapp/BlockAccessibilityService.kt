@@ -9,7 +9,10 @@ import android.os.Handler
 import android.os.Looper
 import android.os.PowerManager
 import android.os.SystemClock
+import android.app.ActivityManager
 import android.view.accessibility.AccessibilityEvent
+import android.view.accessibility.AccessibilityNodeInfo
+import android.view.accessibility.AccessibilityWindowInfo
 
 /**
  * Modalità base (senza Device Owner): quando si apre un'app bloccata, si torna alla home
@@ -44,6 +47,7 @@ class BlockAccessibilityService : AccessibilityService() {
     private val watcher = object : Runnable {
         override fun run() {
             runCatching {
+                closePip()
                 val fg = Limits.foregroundApp(this@BlockAccessibilityService)
                 Prefs.setDiag(this@BlockAccessibilityService, "fg", fg ?: "(nessuna)")
                 Prefs.setDiag(this@BlockAccessibilityService, "acc_loop", System.currentTimeMillis().toString())
@@ -125,6 +129,10 @@ class BlockAccessibilityService : AccessibilityService() {
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
+        if (event?.eventType == AccessibilityEvent.TYPE_WINDOWS_CHANGED) {
+            runCatching { closePip() }
+            return
+        }
         if (event?.eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) return
         val pkg = event.packageName?.toString() ?: return
         if (isNoise(pkg)) return
@@ -138,12 +146,70 @@ class BlockAccessibilityService : AccessibilityService() {
 
     private fun block(pkg: String) {
         current = null
-        performGlobalAction(GLOBAL_ACTION_HOME)
+        // NIENTE tasto Home: con Home app come YouTube vanno in picture-in-picture.
+        // Si apre la schermata di blocco sopra l'app, che così finisce in background "ferma".
         startActivity(
             Intent(this, BlockedActivity::class.java)
                 .putExtra(BlockedActivity.EXTRA_PKG, pkg)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
         )
+        // Poi si chiude il processo (stop anche all'audio).
+        handler.postDelayed({ kill(pkg) }, 1_200)
+        handler.postDelayed({ kill(pkg) }, 4_000)
+    }
+
+    private fun kill(pkg: String) {
+        runCatching { getSystemService(ActivityManager::class.java).killBackgroundProcesses(pkg) }
+    }
+
+    /** Se un'app bloccata è rimpicciolita in un riquadro (PiP), lo chiude. */
+    private var lastPip = 0L
+
+    private fun closePip() {
+        val targets = Policy.targets(this)
+        if (targets.isEmpty()) return
+        if (SystemClock.elapsedRealtime() - lastPip < 3_000) return
+        val pip = runCatching { windows }.getOrNull()?.firstOrNull { w ->
+            w.isInPictureInPictureMode && w.root?.packageName?.toString() in targets
+        } ?: return
+        val pkg = pip.root?.packageName?.toString() ?: return
+        lastPip = SystemClock.elapsedRealtime()
+        // 1) tocco sul riquadro -> compare il menu di sistema con la X
+        pip.root?.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+        handler.postDelayed({
+            if (!clickClose()) {
+                // 2) se la X non si trova: riporta l'app a schermo intero e la blocca normalmente
+                block(pkg)
+            } else handler.postDelayed({ kill(pkg) }, 800)
+        }, 700)
+    }
+
+    private val closeWords = Regex("(?i)^(chiudi|close|ignora|dismiss|esci)\\b.*")
+
+    private fun clickClose(): Boolean {
+        val ws = runCatching { windows }.getOrNull() ?: return false
+        for (w in ws) {
+            val root = w.root ?: continue
+            if (root.packageName?.toString() != "com.android.systemui") continue
+            val node = find(root) { n ->
+                val label = (n.contentDescription ?: n.text)?.toString() ?: return@find false
+                closeWords.matches(label.trim())
+            } ?: continue
+            var c: AccessibilityNodeInfo? = node
+            while (c != null && !c.isClickable) c = c.parent
+            if (c?.performAction(AccessibilityNodeInfo.ACTION_CLICK) == true) return true
+        }
+        return false
+    }
+
+    private fun find(n: AccessibilityNodeInfo, depth: Int = 0, pred: (AccessibilityNodeInfo) -> Boolean): AccessibilityNodeInfo? {
+        if (pred(n)) return n
+        if (depth > 25) return null
+        for (i in 0 until n.childCount) {
+            val c = n.getChild(i) ?: continue
+            find(c, depth + 1, pred)?.let { return it }
+        }
+        return null
     }
 
     override fun onInterrupt() = Unit
