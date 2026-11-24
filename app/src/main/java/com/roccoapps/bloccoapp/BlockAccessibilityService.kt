@@ -128,6 +128,7 @@ class BlockAccessibilityService : AccessibilityService() {
         offSince = 0L
         if (fg == null || Free.isFree(this, fg)) return                               // musica, Maps: non conta
         if (freeInPip()) return                                                        // Maps rimpicciolita mentre guidi
+        if (Free.inCall(this)) return                                                  // chiamata in corso
         sessionMs += dt
         if (!Prefs.sessionAlert(this)) return
         if (nextAlertMs == 0L) nextAlertMs = Prefs.sessionFirstMin(this) * 60_000L
@@ -183,7 +184,7 @@ class BlockAccessibilityService : AccessibilityService() {
         if (pkg == packageName) return
         if (pkg in Prefs.limits(this)) runCatching { Limits.tick(this) }
         if (pkg in Policy.targets(this)) { stopCountdown(); block(pkg); return }
-        if (prev != pkg && Pause.needed(this, pkg) && !freeInPip()) {
+        if (prev != pkg && Pause.needed(this, pkg) && !freeInPip() && !Free.inCall(this)) {
             Pause.left(pkg) // evita doppie pause mentre la schermata è aperta
             startActivity(
                 Intent(this, PauseActivity::class.java)

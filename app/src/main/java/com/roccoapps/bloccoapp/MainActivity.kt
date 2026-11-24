@@ -524,7 +524,7 @@ class MainActivity : ComponentActivity() {
             }
             Text(
                 "App libere (niente pausa, non contano nella sessione né nel tempo totale): " +
-                    free.joinToString(", ") + ". La home e lo scorrere tra le app contano invece nella sessione.",
+                    free.joinToString(", ") + ". Anche le chiamate (telefono e WhatsApp) non contano. La home e lo scorrere tra le app invece sì.",
                 style = MaterialTheme.typography.bodySmall
             )
         }
