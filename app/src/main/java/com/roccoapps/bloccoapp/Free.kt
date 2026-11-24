@@ -5,10 +5,12 @@ import android.content.Intent
 
 /**
  * App "libere": niente pausa, non contano nella sessione lunga né nel tempo totale.
- * ytmp3 (musica) viene riconosciuta in automatico dal nome; altre si aggiungono a mano.
+ * ytmp3 (musica) viene riconosciuta in automatico dal nome; Maps e Waze sono sempre libere.
  */
 object Free {
     private val AUTO = Regex("(?i)ytmp3")
+    /** Navigatori: mai intromettersi (anche mentre si guida). */
+    val NAV = setOf("com.google.android.apps.maps", "com.waze", "com.google.android.apps.mapslite")
     @Volatile private var autoCache: Set<String>? = null
     @Volatile private var cacheAt = 0L
 
@@ -26,6 +28,6 @@ object Free {
         return found
     }
 
-    fun all(ctx: Context): Set<String> = auto(ctx) + Prefs.freeApps(ctx)
+    fun all(ctx: Context): Set<String> = auto(ctx) + NAV + Prefs.freeApps(ctx)
     fun isFree(ctx: Context, pkg: String) = pkg in all(ctx)
 }

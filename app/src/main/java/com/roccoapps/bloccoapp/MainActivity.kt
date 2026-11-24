@@ -490,7 +490,10 @@ class MainActivity : ComponentActivity() {
         val ctx = this
         val on = Prefs.sessionAlert(ctx)
         val first = Prefs.sessionFirstMin(ctx)
-        val free = remember(rev) { Free.all(ctx).map { labelOf(it, null) } }
+        val free = remember(rev) {
+            Free.all(ctx).filter { p -> runCatching { packageManager.getApplicationInfo(p, 0) }.isSuccess }
+                .map { labelOf(it, null) }.ifEmpty { listOf("nessuna installata") }
+        }
         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text("Abitudini", fontWeight = FontWeight.Bold)
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -520,8 +523,8 @@ class MainActivity : ComponentActivity() {
                 }
             }
             Text(
-                "App libere (musica: niente pausa, non contano nella sessione né nel tempo totale): " +
-                    if (free.isEmpty()) "nessuna trovata — vale per le app con \"ytmp3\" nel nome." else free.joinToString(", ") + " ✅",
+                "App libere (niente pausa, non contano nella sessione né nel tempo totale): " +
+                    free.joinToString(", ") + ". La home e lo scorrere tra le app contano invece nella sessione.",
                 style = MaterialTheme.typography.bodySmall
             )
         }

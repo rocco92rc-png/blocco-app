@@ -126,7 +126,8 @@ class BlockAccessibilityService : AccessibilityService() {
             return
         }
         offSince = 0L
-        if (fg == null || Free.isFree(this, fg)) return                               // musica ecc.: non conta
+        if (fg == null || Free.isFree(this, fg)) return                               // musica, Maps: non conta
+        if (freeInPip()) return                                                        // Maps rimpicciolita mentre guidi
         sessionMs += dt
         if (!Prefs.sessionAlert(this)) return
         if (nextAlertMs == 0L) nextAlertMs = Prefs.sessionFirstMin(this) * 60_000L
@@ -139,6 +140,12 @@ class BlockAccessibilityService : AccessibilityService() {
         }
         Prefs.setDiag(this, "session", (sessionMs / 60_000).toString())
     }
+
+    /** Un'app libera (es. Maps in navigazione) è aperta in un riquadro picture-in-picture? */
+    private fun freeInPip(): Boolean = runCatching {
+        val free = Free.all(this)
+        windows.any { it.isInPictureInPictureMode && it.root?.packageName?.toString() in free }
+    }.getOrDefault(false)
 
     /** Eventi da ignorare: tastiera e interfaccia di sistema non sono un "cambio app". */
     private fun isNoise(pkg: String): Boolean {
@@ -176,7 +183,7 @@ class BlockAccessibilityService : AccessibilityService() {
         if (pkg == packageName) return
         if (pkg in Prefs.limits(this)) runCatching { Limits.tick(this) }
         if (pkg in Policy.targets(this)) { stopCountdown(); block(pkg); return }
-        if (prev != pkg && Pause.needed(this, pkg)) {
+        if (prev != pkg && Pause.needed(this, pkg) && !freeInPip()) {
             Pause.left(pkg) // evita doppie pause mentre la schermata è aperta
             startActivity(
                 Intent(this, PauseActivity::class.java)
