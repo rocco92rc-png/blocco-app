@@ -69,6 +69,20 @@ object Prefs {
     fun diag(ctx: Context, key: String): String? = sp(ctx).getString("diag_" + key, null)
     fun setDiag(ctx: Context, key: String, v: String) = sp(ctx).edit().putString("diag_" + key, v).apply()
 
+    // App con "pausa prima di aprire" (aggiungere libero, togliere con password).
+    fun pauseApps(ctx: Context): Set<String> = sp(ctx).getStringSet("pause", emptySet())!!.toSet()
+    fun setPauseApps(ctx: Context, v: Set<String>) = sp(ctx).edit().putStringSet("pause", v.toSet()).apply()
+
+    // App libere aggiunte a mano (ytmp3 è riconosciuta in automatico).
+    fun freeApps(ctx: Context): Set<String> = sp(ctx).getStringSet("free", emptySet())!!.toSet()
+    fun setFreeApps(ctx: Context, v: Set<String>) = sp(ctx).edit().putStringSet("free", v.toSet()).apply()
+
+    // Avviso sessione lunga.
+    fun sessionAlert(ctx: Context) = sp(ctx).getBoolean("session_alert", true)
+    fun setSessionAlert(ctx: Context, on: Boolean) = sp(ctx).edit().putBoolean("session_alert", on).apply()
+    fun sessionFirstMin(ctx: Context) = sp(ctx).getInt("session_first", 15)
+    fun setSessionFirstMin(ctx: Context, m: Int) = sp(ctx).edit().putInt("session_first", m).apply()
+
     fun lastUpdateCheck(ctx: Context) = sp(ctx).getLong("last_upd", 0L)
     fun setLastUpdateCheck(ctx: Context, t: Long) = sp(ctx).edit().putLong("last_upd", t).apply()
 }

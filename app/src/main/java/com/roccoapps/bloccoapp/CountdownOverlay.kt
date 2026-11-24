@@ -10,7 +10,7 @@ import android.view.WindowManager
 import android.widget.TextView
 
 /** Pillola in sovraimpressione con il tempo rimasto (solo dal servizio di Accessibilità). */
-class CountdownOverlay(private val ctx: Context) {
+class CountdownOverlay(private val ctx: Context, private val yDp: Int = 36, private val urgentColor: String = "#E6C62828") {
     private val wm = ctx.getSystemService(WindowManager::class.java)
     private var view: TextView? = null
     private val d = ctx.resources.displayMetrics.density
@@ -36,13 +36,13 @@ class CountdownOverlay(private val ctx: Context) {
                 PixelFormat.TRANSLUCENT
             ).apply {
                 gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
-                y = (36 * d).toInt()
+                y = (yDp * d).toInt()
             }
             runCatching { wm.addView(tv, lp) }
                 .onFailure { Prefs.setDiag(ctx, "err", "overlay: $it") }
             view = tv
         }
-        bg.setColor(if (urgent) Color.parseColor("#E6C62828") else Color.parseColor("#E6333333"))
+        bg.setColor(if (urgent) Color.parseColor(urgentColor) else Color.parseColor("#E6333333"))
         v.text = text
     }
 

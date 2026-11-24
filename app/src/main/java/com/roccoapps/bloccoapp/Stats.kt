@@ -40,7 +40,7 @@ object Stats {
         val home = ctx.packageManager.queryIntentActivities(
             Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME), 0
         ).map { it.activityInfo.packageName }
-        return home.toSet() + setOf(ctx.packageName, "com.android.systemui", "android")
+        return home.toSet() + setOf(ctx.packageName, "com.android.systemui", "android") + Free.all(ctx)
     }
 
     fun report(ctx: Context, days: Int = 7): UsageReport? {

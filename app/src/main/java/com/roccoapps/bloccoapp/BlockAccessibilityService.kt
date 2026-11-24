@@ -50,6 +50,7 @@ class BlockAccessibilityService : AccessibilityService() {
                 closePip()
                 val fg = Limits.foregroundApp(this@BlockAccessibilityService)
                 Prefs.setDiag(this@BlockAccessibilityService, "fg", fg ?: "(nessuna)")
+                sessionTick(fg ?: current)
                 Prefs.setDiag(this@BlockAccessibilityService, "acc_loop", System.currentTimeMillis().toString())
                 val limited = fg != null && fg in Prefs.limits(this@BlockAccessibilityService)
                 when {
@@ -107,6 +108,38 @@ class BlockAccessibilityService : AccessibilityService() {
         overlay?.hide()
     }
 
+    // ---- avviso sessione lunga (tutte le app tranne le libere)
+    private var sessionMs = 0L
+    private var lastSessionTick = 0L
+    private var offSince = 0L
+    private var nextAlertMs = 0L
+    private var sessionOverlay: CountdownOverlay? = null
+
+    private fun sessionTick(fg: String?) {
+        val now = SystemClock.elapsedRealtime()
+        val dt = if (lastSessionTick == 0L) 0L else (now - lastSessionTick).coerceAtMost(10_000)
+        lastSessionTick = now
+        val interactive = getSystemService(PowerManager::class.java).isInteractive
+        if (!interactive) {
+            if (offSince == 0L) offSince = now
+            if (now - offSince > 2 * 60_000) { sessionMs = 0L; nextAlertMs = 0L }   // pausa vera: si riparte
+            return
+        }
+        offSince = 0L
+        if (fg == null || Free.isFree(this, fg)) return                               // musica ecc.: non conta
+        sessionMs += dt
+        if (!Prefs.sessionAlert(this)) return
+        if (nextAlertMs == 0L) nextAlertMs = Prefs.sessionFirstMin(this) * 60_000L
+        if (sessionMs >= nextAlertMs) {
+            val min = sessionMs / 60_000
+            val o = sessionOverlay ?: CountdownOverlay(this, yDp = 84, urgentColor = "#E6EF6C00").also { sessionOverlay = it }
+            o.show("📱 Sei sul telefono da $min min", urgent = true)
+            handler.postDelayed({ o.hide() }, 8_000)
+            nextAlertMs += 10 * 60_000L
+        }
+        Prefs.setDiag(this, "session", (sessionMs / 60_000).toString())
+    }
+
     /** Eventi da ignorare: tastiera e interfaccia di sistema non sono un "cambio app". */
     private fun isNoise(pkg: String): Boolean {
         if (pkg == "com.android.systemui") return true
@@ -125,6 +158,7 @@ class BlockAccessibilityService : AccessibilityService() {
         handler.removeCallbacks(loop)
         handler.removeCallbacks(watcher)
         stopCountdown()
+        sessionOverlay?.hide()
         super.onDestroy()
     }
 
@@ -136,10 +170,21 @@ class BlockAccessibilityService : AccessibilityService() {
         if (event?.eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) return
         val pkg = event.packageName?.toString() ?: return
         if (isNoise(pkg)) return
+        val prev = current
         current = pkg
+        if (prev != null && prev != pkg) Pause.left(prev)
         if (pkg == packageName) return
         if (pkg in Prefs.limits(this)) runCatching { Limits.tick(this) }
         if (pkg in Policy.targets(this)) { stopCountdown(); block(pkg); return }
+        if (prev != pkg && Pause.needed(this, pkg)) {
+            Pause.left(pkg) // evita doppie pause mentre la schermata è aperta
+            startActivity(
+                Intent(this, PauseActivity::class.java)
+                    .putExtra(PauseActivity.EXTRA_PKG, pkg)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+            )
+            return
+        }
         // Avvio immediato quando si entra in un'app con limite (il watcher poi lo tiene allineato).
         if (pkg in Prefs.limits(this) && pkg != countPkg) startCountdown(pkg)
     }

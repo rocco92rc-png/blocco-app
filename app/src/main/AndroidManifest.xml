@@ -44,6 +44,13 @@
         </activity>
 
         <activity
+            android:name=".PauseActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:launchMode="singleTask"
+            android:taskAffinity="" />
+
+        <activity
             android:name=".BlockedActivity"
             android:exported="false"
             android:excludeFromRecents="true"

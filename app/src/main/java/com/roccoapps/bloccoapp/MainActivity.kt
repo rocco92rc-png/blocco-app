@@ -1,3 +1,5 @@
+@file:OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+
 package com.roccoapps.bloccoapp
 
 import android.content.ClipData
@@ -484,6 +486,48 @@ class MainActivity : ComponentActivity() {
     }
 
     @Composable
+    private fun HabitsCard(rev: Int) {
+        val ctx = this
+        val on = Prefs.sessionAlert(ctx)
+        val first = Prefs.sessionFirstMin(ctx)
+        val free = remember(rev) { Free.all(ctx).map { labelOf(it, null) } }
+        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text("Abitudini", fontWeight = FontWeight.Bold)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Avviso sessione lunga")
+                    Text(
+                        "Dopo $first min di fila sul telefono compare \"📱 Sei sul telefono da …\", poi ogni 10 min. " +
+                            "Si azzera con 2 min di schermo spento.",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+                Switch(checked = on, onCheckedChange = { want ->
+                    if (want) { Prefs.setSessionAlert(ctx, true); refresh++ }
+                    else withPassword("Disattivare l'avviso di sessione lunga?") { Prefs.setSessionAlert(ctx, false) }
+                })
+            }
+            if (on) Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                listOf(10, 15, 20, 30).forEach { m ->
+                    FilterChip(
+                        selected = first == m,
+                        onClick = {
+                            if (m <= first) { Prefs.setSessionFirstMin(ctx, m); refresh++ }
+                            else withPassword("Allungare il primo avviso a $m min?") { Prefs.setSessionFirstMin(ctx, m) }
+                        },
+                        label = { Text("$m min") }
+                    )
+                }
+            }
+            Text(
+                "App libere (musica: niente pausa, non contano nella sessione né nel tempo totale): " +
+                    if (free.isEmpty()) "nessuna trovata — vale per le app con \"ytmp3\" nel nome." else free.joinToString(", ") + " ✅",
+                style = MaterialTheme.typography.bodySmall
+            )
+        }
+    }
+
+    @Composable
     private fun PermissionsCard(rev: Int) {
         var tick by remember { mutableIntStateOf(0) }
         LaunchedEffect(Unit) { while (true) { delay(3_000); tick++ } }
@@ -545,6 +589,7 @@ class MainActivity : ComponentActivity() {
             add("Accessibilità collegata: " + ago("acc_conn"))
             add("Accessibilità ultimo controllo: " + ago("acc_loop"))
             add("Servizio limiti ultimo controllo: " + ago("guard_loop"))
+            add("Sessione attuale: " + (Prefs.diag(ctx, "session") ?: "-") + " min")
             add("App in primo piano rilevata: " + (Prefs.diag(ctx, "fg")?.let { labelOf(it, null) } ?: "-"))
             limits.forEach { (p, m) ->
                 add("• ${labelOf(p, null)}: ${Stats.fmt(used[p] ?: 0L)} / $m min" + if (p in over) " → BLOCCATA" else "")
@@ -765,13 +810,16 @@ class MainActivity : ComponentActivity() {
         val access = Limits.hasUsageAccess(this)
         val used = remember(rev) { Limits.usageToday(this, limits.keys) }
         val over = Limits.suspendedToday(this)
+        val freeSet = remember(rev) { Free.all(this) }
+        val pauseSet = Prefs.pauseApps(this)
         var q by rememberSaveable { mutableStateOf("") }
         var editing by remember { mutableStateOf<AppInfo?>(null) }
         val shown = apps.filter { q.isBlank() || it.label.contains(q, true) }
             .sortedWith(compareByDescending<AppInfo> { it.pkg in limits }.thenBy { it.label.lowercase() })
         Column {
             Text(
-                "Minuti al giorno per app. Il limite si imposta UNA volta e poi non si cambia più, neanche con la password. Si azzera a mezzanotte.",
+                "Minuti al giorno per app: si impostano UNA volta e non si cambiano più. Si azzerano a mezzanotte.\n" +
+                    "Pausa = 10 secondi di \"Perché la stai aprendo?\" prima di entrare (automatica per le app con limite).",
                 Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.bodySmall
             )
             if (!access) {
@@ -795,9 +843,28 @@ class MainActivity : ComponentActivity() {
                         val m = ((used[a.pkg] ?: 0L) / 60000).toInt()
                         "Limite $it min · usati $m min" + if (a.pkg in over) " · FINITO per oggi" else ""
                     }
+                    val free = a.pkg in freeSet
+                    val pauseOn = lim != null || a.pkg in pauseSet
                     AppRow(a, sub, onClick = if (lim == null) ({ editing = a }) else null) {
-                        if (lim == null) TextButton(onClick = { editing = a }) { Text("Imposta") }
-                        else Text("🔒")
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            if (free) Text("🎵 libera", style = MaterialTheme.typography.bodySmall)
+                            else FilterChip(
+                                selected = pauseOn,
+                                onClick = {
+                                    when {
+                                        lim != null -> toast("Con un limite la pausa è automatica")
+                                        !pauseOn -> { Prefs.setPauseApps(this@MainActivity, Prefs.pauseApps(this@MainActivity) + a.pkg); refresh++ }
+                                        else -> withPassword("Togliere la pausa a ${a.label}?") {
+                                            Prefs.setPauseApps(this@MainActivity, Prefs.pauseApps(this@MainActivity) - a.pkg)
+                                        }
+                                    }
+                                },
+                                label = { Text("Pausa") }
+                            )
+                            Spacer(Modifier.width(4.dp))
+                            if (lim == null) TextButton(onClick = { editing = a }) { Text("Limite") }
+                            else Text("🔒")
+                        }
                     }
                 }
             }
@@ -924,6 +991,8 @@ class MainActivity : ComponentActivity() {
                     }
                 }) { Text("Controlla aggiornamenti") }
             }
+            item { HorizontalDivider() }
+            item { HabitsCard(rev) }
             item { HorizontalDivider() }
             item { PermissionsCard(rev) }
             item { DiagnosticsCard(rev) }
